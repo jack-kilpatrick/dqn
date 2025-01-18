@@ -15,7 +15,7 @@ def print_and_log(string: str, log_file_path: str | os.PathLike | None) -> None:
         with open(log_file_path, "a") as f:
             f.write(log_string + "\n")
 
-def train(agent: Agent, env: gym.Env, num_train_iters:int = 12500000, num_eval_iters:int = 25000, train_freq:int = 4, eval_freq:int = 2500, use_checkpoint:bool = True, checkpoint_freq: int = 12500, log_file_path: str | os.PathLike = None, rewards_file_path: str | os.PathLike = "eval_mean_rewards_per_episode.npy") -> None:
+def train(agent: Agent, env: gym.Env, num_train_iters:int = 25000000, num_eval_iters:int = 25000, train_freq:int = 4, eval_freq:int = 2500, use_checkpoint:bool = True, checkpoint_freq: int = 12500, log_file_path: str | os.PathLike = None, rewards_file_path: str | os.PathLike = "eval_mean_rewards_per_episode.npy") -> None:
 
     agent.train()
     start_iter = 0

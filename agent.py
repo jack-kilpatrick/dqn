@@ -24,6 +24,7 @@ class Agent(nn.Module):
         self.save_replay_buffer = True
         self._init_replay_buffer(self.replay_buffer_size)
         self.train_start_time = 12500
+        self._train_start_counter = 0
 
         self.batch_size = 32
         self.lr = 0.00025
@@ -55,12 +56,14 @@ class Agent(nn.Module):
             "iter": self._iter,
             "episode_num": self._episode_num,
             "target_network_update_counter": self._target_network_update_counter,
+            "train_start_counter": self._train_start_counter,
             "model_state_dict": self.state_dict(),
             "optimizer_state_dict": self.optim.state_dict(),
         }, "agent.pt")
         if self.save_replay_buffer:
             torch.save({
                 "curr_replay_buffer_idx": self._curr_replay_buffer_idx,
+                "replay_buffer_num_elts": self._replay_buffer_num_elts,
                 "replay_buffer": self.replay_buffer,
             }, "replay_buffer.pt")
 
@@ -69,19 +72,27 @@ class Agent(nn.Module):
             "agent.pt",
             weights_only=True,
         )
-        if self.training and os.path.exists("replay_buffer.pt"):
-            replay_buffer_checkpoint = torch.load(
-                "replay_buffer.pt",
-                weights_only=True,
-            )
-            self.replay_buffer = replay_buffer_checkpoint["replay_buffer"]
-            self._curr_replay_buffer_idx = replay_buffer_checkpoint["curr_replay_buffer_idx"]
         self.load_state_dict(checkpoint["model_state_dict"])
         self.optim.load_state_dict(checkpoint["optimizer_state_dict"])
         self._iter = checkpoint["iter"]
         self._episode_num = checkpoint["episode_num"]
         self._target_network_update_counter = checkpoint["target_network_update_counter"]
+        self._train_start_counter = checkpoint["train_start_counter"]
         self._update_current_eps()
+
+        if self.training:
+            try:
+                replay_buffer_checkpoint = torch.load(
+                    "replay_buffer.pt",
+                    weights_only=True,
+                )
+                self.replay_buffer = replay_buffer_checkpoint["replay_buffer"]
+                self._curr_replay_buffer_idx = replay_buffer_checkpoint["curr_replay_buffer_idx"]
+                self._replay_buffer_num_elts = replay_buffer_checkpoint["replay_buffer_num_elts"]
+            except (FileNotFoundError, RuntimeError) as _:
+                self._iter -= self.train_start_time
+                self._train_start_counter = 0
+      
         return self._iter, self._episode_num
 
 
@@ -103,6 +114,7 @@ class Agent(nn.Module):
     def _init_replay_buffer(self, replay_buffer_size: int) -> None:
         self.replay_buffer = [None for _ in range(replay_buffer_size)]
         self._curr_replay_buffer_idx = 0
+        self._replay_buffer_num_elts = 0
     
     def _add_to_replay_buffer(self, prev_state: torch.Tensor, action: int, reward: float, state: torch.Tensor) -> None:
         prev_state = (prev_state * 255).to(device=torch.device("cpu"), dtype=torch.uint8)
@@ -112,6 +124,8 @@ class Agent(nn.Module):
 
         self.replay_buffer[self._curr_replay_buffer_idx] = (prev_state, action, reward, state)
         self._curr_replay_buffer_idx = (self._curr_replay_buffer_idx + 1) % self.replay_buffer_size
+        if self._replay_buffer_num_elts < self.replay_buffer_size:
+            self._replay_buffer_num_elts += 1
 
     def _sample_from_replay_buffer(self, batch_size: int) -> None:
         prev_states = []
@@ -120,7 +134,7 @@ class Agent(nn.Module):
         nonterminal_states = []
         nonterminal_states_mask = []
 
-        for batch_idx, sample_idx in enumerate(torch.randint(high=min(self._iter, self.replay_buffer_size), size=(batch_size, ))):
+        for batch_idx, sample_idx in enumerate(torch.randint(high=self._replay_buffer_num_elts, size=(batch_size, ))):
             prev_state, action, reward, state = self.replay_buffer[sample_idx]
             prev_states.append(prev_state)
             actions.append(action)
@@ -150,7 +164,7 @@ class Agent(nn.Module):
             self._curr_eps = self._eps_schedule[-1]
 
     def train_step(self) -> None:
-        if self._iter < self.train_start_time:
+        if self._train_start_counter < self.train_start_time:
             return
 
         batch = self._sample_from_replay_buffer(self.batch_size)
@@ -180,14 +194,16 @@ class Agent(nn.Module):
                 self._add_to_replay_buffer(self._prev_state, action, reward, state)
             self._prev_state = state
         
-        if self._iter < self.train_start_time or torch.bernoulli(self.get_curr_eps()) == 1:
+        if (self._train_start_counter < self.train_start_time and self._iter < self.train_start_time) or torch.bernoulli(self.get_curr_eps()) == 1:
             action = torch.randint(high=self.num_actions, size=(1, )).item()
         else:
             qs = self.network(state.unsqueeze(0))
             action = torch.argmax(qs, -1).squeeze(0).item()
-
+            
         if self.training:
             self._iter += 1
             self._update_current_eps()
+            if self._train_start_counter < self.train_start_time:
+                self._train_start_counter += 1
             
         return action
