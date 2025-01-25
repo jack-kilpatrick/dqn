@@ -1,5 +1,3 @@
-*.txt
-*.ipynb
-*.pt
-*.npy
 __pycache__/
+logs/
+checkpoints/
