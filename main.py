@@ -17,7 +17,7 @@ def print_and_log(string: str, log_file_path: str | os.PathLike | None, timestam
         with open(log_file_path, "a") as f:
             f.write(log_string + "\n")
 
-def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq:int = 4, num_eval_iters:int = 125000, eval_freq:int = 250000, use_checkpoints:bool = True, log_file_path: str | os.PathLike = None, eval_rewards_file_path: str | os.PathLike | None = None, eval_rewards_figure_file_path: str | os.PathLike | None = None) -> Agent:
+def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq:int = 4, num_eval_iters:int = 125000, eval_freq:int = 250000, log_file_path: str | os.PathLike = None, eval_rewards_file_path: str | os.PathLike | None = None, eval_rewards_figure_file_path: str | os.PathLike | None = None) -> Agent:
     """
     Train an agent in the given environment for a specified number of iterations.
     Evaluate throughout training in a separate loop at the specified frequency and for the specified duration.
@@ -29,13 +29,12 @@ def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq
     episode_num = 1
     eval_mean_rewards_per_episode = []
     best_mean_reward_per_episode = -np.inf
-    if use_checkpoints:
-        if agent.has_checkpoint():
-            print_and_log(f": Found checkpoint. Loading...", log_file_path=log_file_path)
-            start_iter, episode_num, best_mean_reward_per_episode = agent.load_checkpoint()
-            if best_mean_reward_per_episode is None:
-                best_mean_reward_per_episode = -np.inf
-            print_and_log(f"Continuing from iteration {start_iter}", log_file_path=log_file_path)
+    if agent.has_checkpoint():
+        print_and_log(f": Found checkpoint. Loading...", log_file_path=log_file_path)
+        start_iter, episode_num, best_mean_reward_per_episode = agent.load_checkpoint()
+        if best_mean_reward_per_episode is None:
+            best_mean_reward_per_episode = -np.inf
+        print_and_log(f"Continuing from iteration {start_iter}", log_file_path=log_file_path)
         if os.path.exists(eval_rewards_file_path):
             with open(eval_rewards_file_path, "rb") as f:
                 eval_mean_rewards_per_episode = np.load(f).tolist()
@@ -78,7 +77,7 @@ def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq
                 with open(eval_rewards_file_path, "wb") as f:
                     np.save(f, np.array(eval_mean_rewards_per_episode))
                 if eval_rewards_figure_file_path:
-                    plt.plot(np.arange(len(eval_mean_rewards_per_episode)))
+                    plt.plot(np.arange(len(eval_mean_rewards_per_episode)), eval_mean_rewards_per_episode)
                     plt.ylabel("Average score per episode")
                     plt.xlabel(f"Training epochs")
                     plt.savefig(eval_rewards_figure_file_path)
@@ -88,9 +87,8 @@ def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq
                 prev_best_mean_reward_per_episode = best_mean_reward_per_episode
                 best_mean_reward_per_episode = mean_reward_per_episode
                 print_and_log(f"New best mean reward achieved ({prev_best_mean_reward_per_episode:.2f} -> {best_mean_reward_per_episode:2f}).", log_file_path=log_file_path)
-                if use_checkpoints:
-                    print_and_log(f"Saving checkpoint...", log_file_path=log_file_path)
-                    agent.save_checkpoint(iter, episode_num, best_mean_reward_per_episode=best_mean_reward_per_episode)
+                print_and_log(f"Saving checkpoint...", log_file_path=log_file_path)
+                agent.save_checkpoint(iter=iter, episode_num=episode_num, best_mean_reward_per_episode=best_mean_reward_per_episode)
 
         if terminated or truncated or is_eval_iter:
             agent.reset(reward)
@@ -100,13 +98,13 @@ def train(agent: Agent, env: gym.Env, num_train_iters:int = 50000000, train_freq
 
     return agent
 
-def eval(agent: Agent, env: gym.Env, num_iters: int = 125000, use_checkpoints: bool = True, log_file_path: str | os.PathLike = None, summarise_episodes: bool = True) -> float:
+def eval(agent: Agent, env: gym.Env, num_iters: int = 125000, log_file_path: str | os.PathLike = None, summarise_episodes: bool = True) -> float:
     """
     Evaluate an agent in the given environment for a specified number of iterations.
     Returns the mean reward per episode across the evaluation.
     """
     agent.eval_mode()
-    if use_checkpoints and agent.has_checkpoint():
+    if agent.has_checkpoint():
         agent.load_checkpoint()
 
     total_reward = 0
@@ -154,7 +152,6 @@ def main() -> None:
     parser.add_argument("--train_freq", type=int, default=4, help="Number of iterations/environment steps per training step")
     parser.add_argument("--num_eval_iters", type=int, default=125000, help="Number of evaluation iterations/environment steps (Note: for an isolated evaluation if --eval is also passed, otherwise for intermediate evaluations in training)")
     parser.add_argument("--eval_freq",type=int, default=250000, help="Number of iterations/environment steps per intermediate evaluation in training")
-    parser.add_argument("--use_checkpoints", action="store_true", help="Save checkpoints during training, after every intermediate evaluation")
     parser.add_argument("--eval", action="store_true", help="Evaluate a pre-trained agent for a given number of iterations/environment steps")
     parser.add_argument("--render", action="store_true", help="Render the environment")
     args = parser.parse_args()
@@ -167,7 +164,6 @@ def main() -> None:
     num_eval_iters:int = args.num_eval_iters
     eval_freq:int = args.eval_freq
     render:bool = ((not train_mode) or args.render) 
-    use_checkpoints:bool = args.use_checkpoints
 
     torch.manual_seed(2024)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -198,7 +194,7 @@ def main() -> None:
     
     env = gym.make(env_name, render_mode="human" if render else "rgb_array")
     if not render:
-        env = gym.wrappers.RecordVideo(env, name_prefix="train", video_folder=videos_dir, step_trigger=lambda step:(step % (eval_freq * 4 if is_atari_env else eval_freq) == 0))
+        env = gym.wrappers.RecordVideo(env, fps=60, name_prefix=f"unwrapped-env", video_folder=videos_dir, step_trigger=lambda step:(step % (eval_freq * 4 if is_atari_env else eval_freq) == 0))
     if is_atari_env:
         env = gym.wrappers.AtariPreprocessing(env, scale_obs=True)
         env = gym.wrappers.FrameStackObservation(env, stack_size=4)
@@ -209,9 +205,9 @@ def main() -> None:
     agent = DQN(name=agent_name, env=env, device=device)
 
     if train_mode:
-        train(agent, env, num_train_iters=num_train_iters, train_freq=train_freq, num_eval_iters=num_eval_iters, eval_freq=eval_freq, use_checkpoints=use_checkpoints, log_file_path=train_log_file_path, eval_rewards_file_path=eval_rewards_file_path, eval_rewards_figure_file_path=eval_rewards_figure_file_path)
+        train(agent, env, num_train_iters=num_train_iters, train_freq=train_freq, num_eval_iters=num_eval_iters, eval_freq=eval_freq, log_file_path=train_log_file_path, eval_rewards_file_path=eval_rewards_file_path, eval_rewards_figure_file_path=eval_rewards_figure_file_path)
     else:
-        eval(agent, env, num_iters=num_eval_iters, use_checkpoints=use_checkpoints, log_file_path=eval_log_file_path)
+        eval(agent, env, num_iters=num_eval_iters, log_file_path=eval_log_file_path)
     env.close()
 
 if __name__ == "__main__":

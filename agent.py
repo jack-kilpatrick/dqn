@@ -193,7 +193,7 @@ class DQN(Agent):
                 nn.Linear(400, 300),
                 nn.ReLU(),
                 nn.Linear(300, num_actions)
-            )
+            ).to(self.device)
         self.target_network = copy.deepcopy(self.network)
 
     def _init_replay_buffer(self, replay_buffer_size: int) -> None:
